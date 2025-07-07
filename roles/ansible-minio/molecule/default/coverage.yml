@@ -1,0 +1,16 @@
+- name: Converge
+  hosts: all
+  become: true
+  vars:
+    minio_root_user: "testadmin"
+    minio_root_password: "TestPassword123"
+    minio_data_dir: "/opt/minio/data"
+    minio_buckets:
+      - "test-bucket-1"
+      - "test-bucket-2"
+    minio_bucket_policies:
+      - name: "test-bucket-1"
+        policy: "download"
+  tasks:
+    # Include your MinIO playbook tasks here
+    - include_tasks: ../../tasks/main.yml

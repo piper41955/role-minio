@@ -1,0 +1,134 @@
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install required packages
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - systemd
+    state: present
+
+- name: Create minio group
+  ansible.builtin.group:
+    name: "{{ minio_group }}"
+    state: present
+
+- name: Create minio user
+  ansible.builtin.user:
+    name: "{{ minio_user }}"
+    group: "{{ minio_group }}"
+    system: yes
+    shell: /bin/false
+    home: /nonexistent
+    createhome: no
+    state: present
+
+- name: Create minio directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ minio_user }}"
+    group: "{{ minio_group }}"
+    mode: '0755'
+  loop:
+    - "{{ minio_data_dir }}"
+    - "{{ minio_config_dir }}"
+    - "{{ minio_log_dir }}"
+    - /usr/local/bin
+
+- name: Download MinIO binary
+  ansible.builtin.get_url:
+    url: "https://dl.min.io/server/minio/release/linux-amd64/minio"
+    dest: /usr/local/bin/minio
+    mode: '0755'
+    owner: root
+    group: root
+    force: true
+  notify: Restart minio
+
+- name: Create MinIO configuration file
+  ansible.builtin.template:
+    src: minio.conf.j2
+    dest: "{{ minio_config_dir }}/minio.conf"
+    owner: root
+    group: "{{ minio_group }}"
+    mode: '0640'
+  notify: Restart minio
+
+- name: Create MinIO systemd service file
+  ansible.builtin.template:
+    src: minio.service.j2
+    dest: /etc/systemd/system/minio.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Restart minio
+
+- name: Check if MinIO credentials block exists in .bash_profile
+  ansible.builtin.lineinfile:
+    path: /root/.bash_profile
+    regexp: '^# MinIO Admin Credentials'
+    state: absent
+  check_mode: true
+  register: minio_block_exists
+  changed_when: false
+
+- name: Add MinIO admin credentials block to root .bash_profile
+  ansible.builtin.blockinfile:
+    path: /root/.bash_profile
+    create: true
+    marker: "# {mark} ANSIBLE MANAGED MinIO Admin Credentials"
+    block: |
+      # MinIO Admin Credentials
+      export MINIO_ROOT_USER={{ minio_root_user }}
+      export MINIO_ROOT_PASSWORD={{ minio_root_password }}
+      export MINIO_SERVER_URL=http://{{ ansible_default_ipv4.address }}:{{ minio_port }}
+      export MINIO_CONSOLE_URL=http://{{ ansible_default_ipv4.address }}:{{ minio_console_port }}
+    state: present
+
+- name: Enable and start MinIO service
+  ansible.builtin.systemd:
+    name: minio
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Wait for MinIO to be ready
+  ansible.builtin.uri:
+    url: "http://{{ minio_bind_address }}:{{ minio_port }}/minio/health/ready"
+    method: GET
+    status_code: 200
+  register: minio_health
+  until: minio_health.status == 200
+  retries: 30
+  delay: 2
+
+- name: Download MinIO client (mc)
+  ansible.builtin.get_url:
+    url: "https://dl.min.io/client/mc/release/linux-amd64/mc"
+    dest: /usr/local/bin/mc
+    mode: '0777'
+    owner: root
+    group: root
+
+- name: Configure MinIO client alias
+  shell: |
+    /usr/local/bin/mc alias set local http://localhost:{{ minio_port }} {{ minio_root_user }} {{ minio_root_password }}
+  environment:
+    HOME: /root
+  become_user: root
+
+- name: Display MinIO access information
+  ansible.builtin.debug:
+    msg:
+      - "MinIO installation completed successfully!"
+      - "Server URL: http://{{ ansible_default_ipv4.address }}:{{ minio_port }}"
+      - "Console URL: http://{{ ansible_default_ipv4.address }}:{{ minio_console_port }}"
+      - "Root User: {{ minio_root_user }}"
+      - "Root Password: {{ minio_root_password }}"
+      - "Data Directory: {{ minio_data_dir }}"

@@ -1,0 +1,129 @@
+- name: Verify MinIO installation
+  hosts: all
+  become: true
+  vars:
+    minio_port: "9000"
+    minio_console_port: "9001"
+    minio_root_user: "testadmin"
+    minio_root_password: "TestPassword123"
+  tasks:
+    - name: Check if MinIO binary exists
+      stat:
+        path: /usr/local/bin/minio
+      register: minio_binary
+
+    - name: Verify MinIO binary is executable
+      assert:
+        that:
+          - minio_binary.stat.exists
+          - minio_binary.stat.executable
+
+    - name: Check if MinIO service is running
+      systemd:
+        name: minio
+        state: started
+      register: minio_service
+
+    - name: Verify MinIO service status
+      assert:
+        that:
+          - minio_service.status.ActiveState == "active"
+
+    - name: Check MinIO health endpoint
+      uri:
+        url: "http://localhost:{{ minio_port }}/minio/health/ready"
+        method: GET
+        status_code: 200
+      register: health_check
+      retries: 5
+      delay: 3
+
+    - name: Verify MinIO is responding
+      assert:
+        that:
+          - health_check.status == 200
+
+    - name: Check if MinIO client is installed
+      stat:
+        path: /usr/local/bin/mc
+      register: mc_binary
+
+    - name: Verify MinIO client is executable
+      assert:
+        that:
+          - mc_binary.stat.exists
+          - mc_binary.stat.executable
+
+    - name: Test MinIO client connectivity
+      shell: |
+        /usr/local/bin/mc alias set testlocal http://localhost:{{ minio_port }} {{ minio_root_user }} {{ minio_root_password }}
+        /usr/local/bin/mc admin info testlocal
+      environment:
+        HOME: /root
+      register: mc_test
+
+    - name: Verify MinIO client can connect
+      assert:
+        that:
+          - mc_test.rc == 0
+
+    - name: Check if test buckets exist
+      shell: |
+        /usr/local/bin/mc ls testlocal/{{ item }}
+      environment:
+        HOME: /root
+      register: bucket_check
+      loop:
+        - "test-bucket-1"
+        - "test-bucket-2"
+      failed_when: bucket_check.rc != 0
+
+    - name: Verify bucket policies
+      shell: |
+        /usr/local/bin/mc policy get testlocal/test-bucket-1
+      environment:
+        HOME: /root
+      register: policy_check
+
+    - name: Check credentials in .bash_profile
+      lineinfile:
+        path: /root/.bash_profile
+        regexp: 'export MINIO_ROOT_USER={{ minio_root_user }}'
+        state: absent
+      check_mode: yes
+      register: bash_profile_check
+      changed_when: false
+
+    - name: Verify credentials are in .bash_profile
+      assert:
+        that:
+          - not bash_profile_check.changed
+
+    - name: Test file upload/download
+      block:
+        - name: Create test file
+          copy:
+            content: "This is a test file for MinIO"
+            dest: /tmp/test-file.txt
+
+        - name: Upload test file to MinIO
+          shell: |
+            /usr/local/bin/mc cp /tmp/test-file.txt testlocal/test-bucket-1/
+          environment:
+            HOME: /root
+
+        - name: Download test file from MinIO
+          shell: |
+            /usr/local/bin/mc cp testlocal/test-bucket-1/test-file.txt /tmp/downloaded-file.txt
+          environment:
+            HOME: /root
+
+        - name: Verify downloaded file content
+          slurp:
+            src: /tmp/downloaded-file.txt
+          register: downloaded_content
+
+        - name: Assert file content matches
+          assert:
+            that:
+              - downloaded_content.content | b64decode == "This is a test file for MinIO"

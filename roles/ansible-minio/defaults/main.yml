@@ -1,0 +1,14 @@
+---
+minio_version: "RELEASE.2024-07-04T14-25-45Z"
+minio_user: "minio"
+minio_group: "minio"
+minio_data_dir: "/opt/minio/data"
+minio_config_dir: "/etc/minio"
+minio_log_dir: "/var/log/minio"
+minio_port: "9000"
+minio_console_port: "9001"
+minio_root_user: "minioadmin"
+minio_root_password: "minioadmin123"
+minio_bind_address: "0.0.0.0"
+minio_buckets: []
+minio_bucket_policies: []

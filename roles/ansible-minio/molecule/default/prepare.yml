@@ -1,0 +1,21 @@
+- name: Prepare test environment
+  hosts: all
+  become: true
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages for testing
+      apt:
+        name:
+          - curl
+          - systemd
+          - python3
+          - python3-pip
+        state: present
+
+    - name: Start systemd
+      systemd:
+        daemon_reload: true

@@ -1,0 +1,8 @@
+---
+
+- name: Minio
+  hosts: all
+  any_errors_fatal: true
+  become: true
+  roles:
+    - role: ansible-minio
